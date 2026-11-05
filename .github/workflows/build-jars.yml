@@ -26,6 +26,7 @@ jobs:
   build:
     name: Package server & client
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     env:
       # 无显示环境，避免 Swing 相关测试探测图形设备
       JAVA_TOOL_OPTIONS: -Djava.awt.headless=true
@@ -46,9 +47,11 @@ jobs:
           RUN_TESTS: ${{ inputs.run_tests }}
         run: |
           set -euo pipefail
-          args=(-B -ntp -pl server,client -am package)
+          # -T 1C：多核并行构建 reactor 模块（common 先行，server/client 并行）
+          # 禁用测试时用 maven.test.skip 连 test-compile 一起跳过（skipTests 仍会编译测试代码）
+          args=(-B -ntp -T 1C -pl server,client -am package)
           if [[ "$RUN_TESTS" != "true" ]]; then
-            args+=(-DskipTests)
+            args+=(-Dmaven.test.skip=true)
           fi
           mvn "${args[@]}"
 
@@ -91,7 +94,7 @@ jobs:
                 "$(sha256sum "$jar" | cut -d' ' -f1)"
             done
             echo ""
-            echo "运行：\`java -jar server.jar --headless\` / \`java -jar client.jar\`"
+            echo "运行：\`java -jar server.jar \` / \`java -jar client.jar\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload artifacts
@@ -101,3 +104,5 @@ jobs:
           path: dist/
           if-no-files-found: error
           retention-days: ${{ inputs.retention_days }}
+          # jar 已是压缩格式，跳过 zip 二次压缩
+          compression-level: 0
