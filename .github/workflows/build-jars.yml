@@ -1,0 +1,103 @@
+name: Build JARs
+
+# 仅在 Actions 页面手动触发（需先合并到默认分支）
+on:
+  workflow_dispatch:
+    inputs:
+      run_tests:
+        description: 构建前运行单元测试
+        type: boolean
+        required: false
+        default: true
+      retention_days:
+        description: 产物保留天数（1-90）
+        type: number
+        required: false
+        default: 30
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Package server & client
+    runs-on: ubuntu-latest
+    env:
+      # 无显示环境，避免 Swing 相关测试探测图形设备
+      JAVA_TOOL_OPTIONS: -Djava.awt.headless=true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Build with Maven
+        shell: bash
+        env:
+          RUN_TESTS: ${{ inputs.run_tests }}
+        run: |
+          set -euo pipefail
+          args=(-B -ntp -pl server,client -am package)
+          if [[ "$RUN_TESTS" != "true" ]]; then
+            args+=(-DskipTests)
+          fi
+          mvn "${args[@]}"
+
+      - name: Collect fat jars
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          # shade 会留下 original-*.jar 与 *-shaded.jar 中间产物，只取最终可执行 fat jar
+          for module in server client; do
+            candidates=()
+            for jar in "$module"/target/*.jar; do
+              [[ -f "$jar" ]] || continue
+              case "$(basename "$jar")" in
+                original-*|*-shaded.jar) continue ;;
+              esac
+              candidates+=("$jar")
+            done
+            if [[ ${#candidates[@]} -ne 1 ]]; then
+              echo "::error::expected exactly 1 fat jar for $module, got ${#candidates[@]}: ${candidates[*]}"
+              exit 1
+            fi
+            cp "${candidates[0]}" "dist/$module.jar"
+          done
+          ls -lh dist
+          sha256sum dist/server.jar dist/client.jar > dist/SHA256SUMS.txt
+
+      - name: Job summary
+        shell: bash
+        run: |
+          {
+            echo "### 构建产物"
+            echo ""
+            echo "| JAR | 大小 | SHA256 |"
+            echo "| --- | --- | --- |"
+            for jar in dist/server.jar dist/client.jar; do
+              printf '| `%s` | %s | `%s` |\n' \
+                "$(basename "$jar")" \
+                "$(du -h "$jar" | cut -f1)" \
+                "$(sha256sum "$jar" | cut -d' ' -f1)"
+            done
+            echo ""
+            echo "运行：\`java -jar server.jar --headless\` / \`java -jar client.jar\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: tank-battle-jars-${{ github.run_number }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: ${{ inputs.retention_days }}

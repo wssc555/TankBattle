@@ -13,6 +13,7 @@
     <description>坦克大战联机对战游戏（JDK 21 重构版）</description>
 
     <modules>
+        <module>common</module>
         <module>server</module>
         <module>client</module>
     </modules>
@@ -26,13 +27,20 @@
         <!-- 依赖版本 -->
         <slf4j.version>2.0.19</slf4j.version>
         <logback.version>1.6.6</logback.version>
-        <junit.version>6.1.3</junit.version>
+        <!-- JUnit 版本 -->
+        <junit.version>5.11.4</junit.version>
+        <surefire.version>3.5.2</surefire.version>
 
     </properties>
 
     <!-- 版本集中管理；子模块按需声明，不自动继承 -->
     <dependencyManagement>
         <dependencies>
+            <dependency>
+                <groupId>com.tankbattle</groupId>
+                <artifactId>common</artifactId>
+                <version>${project.version}</version>
+            </dependency>
             <dependency>
                 <groupId>org.slf4j</groupId>
                 <artifactId>slf4j-api</artifactId>
@@ -52,22 +60,17 @@
         </dependencies>
     </dependencyManagement>
 
-    <!-- 两个模块共享：日志门面 + 实现 + 单元测试框架 -->
-    <dependencies>
-        <dependency>
-            <groupId>org.slf4j</groupId>
-            <artifactId>slf4j-api</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>ch.qos.logback</groupId>
-            <artifactId>logback-classic</artifactId>
-            <scope>runtime</scope>
-        </dependency>
-        <dependency>
-            <groupId>org.junit.jupiter</groupId>
-            <artifactId>junit-jupiter</artifactId>
-            <scope>test</scope>
-        </dependency>
-    </dependencies>
+    <!-- 锁定 surefire 版本，保证 mvn test 可运行（JUnit 5.11 需 platform 1.11+） -->
+    <build>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-surefire-plugin</artifactId>
+                    <version>${surefire.version}</version>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+    </build>
 
 </project>
