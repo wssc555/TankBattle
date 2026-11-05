@@ -1,22 +1,15 @@
 name: Build JARs
 
-# 仅在 Actions 页面手动触发（需先合并到默认分支）
+# tag 推送立即自动构建；也支持在 Actions 页面手动触发
 on:
+  push:
+    tags:
+      - 'v*'
   workflow_dispatch:
-    inputs:
-      run_tests:
-        description: 构建前运行单元测试
-        type: boolean
-        required: false
-        default: true
-      retention_days:
-        description: 产物保留天数（1-90）
-        type: number
-        required: false
-        default: 30
 
+# 创建 Release 需要写权限
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -27,9 +20,6 @@ jobs:
     name: Package server & client
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    env:
-      # 无显示环境，避免 Swing 相关测试探测图形设备
-      JAVA_TOOL_OPTIONS: -Djava.awt.headless=true
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -43,17 +33,11 @@ jobs:
 
       - name: Build with Maven
         shell: bash
-        env:
-          RUN_TESTS: ${{ inputs.run_tests }}
         run: |
           set -euo pipefail
           # -T 1C：多核并行构建 reactor 模块（common 先行，server/client 并行）
-          # 禁用测试时用 maven.test.skip 连 test-compile 一起跳过（skipTests 仍会编译测试代码）
-          args=(-B -ntp -T 1C -pl server,client -am package)
-          if [[ "$RUN_TESTS" != "true" ]]; then
-            args+=(-Dmaven.test.skip=true)
-          fi
-          mvn "${args[@]}"
+          # maven.test.skip 连 test-compile 一起跳过，纯打包不跑测试
+          mvn -B -ntp -T 1C -Dmaven.test.skip=true -pl server,client -am package
 
       - name: Collect fat jars
         shell: bash
@@ -103,6 +87,26 @@ jobs:
           name: tank-battle-jars-${{ github.run_number }}
           path: dist/
           if-no-files-found: error
-          retention-days: ${{ inputs.retention_days }}
+          # Actions 产物上限 90 天；tag 构建会额外发布到 Release 永久保存
+          retention-days: 90
           # jar 已是压缩格式，跳过 zip 二次压缩
           compression-level: 0
+
+      # tag 构建产物发布到 GitHub Release，永久保存
+      - name: Publish to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            # Release 已存在时仅覆盖上传附件
+            gh release upload "$TAG" --clobber dist/server.jar dist/client.jar dist/SHA256SUMS.txt
+          else
+            gh release create "$TAG" \
+              --title "Tank Battle $TAG" \
+              --generate-notes \
+              dist/server.jar dist/client.jar dist/SHA256SUMS.txt
+          fi
